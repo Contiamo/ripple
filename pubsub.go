@@ -18,14 +18,15 @@ func NewPublisher(dialTo string) *Publisher {
 	return &Publisher{connPool: connPool, dialTo: dialTo}
 }
 
-func (p *Publisher) Pub(channel string, b []byte) {
+func (p *Publisher) Pub(channel string, b []byte) error {
 	conn := p.connPool.Get()
 	defer conn.Close()
 
 	// base64 encode msg
 	msg := base64.StdEncoding.EncodeToString(b)
 
-	conn.Do("PUBLISH", channel, msg)
+	_, err := conn.Do("PUBLISH", channel, msg)
+	return err
 }
 
 type Subscriber struct {
