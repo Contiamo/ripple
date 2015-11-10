@@ -50,6 +50,8 @@ type QueueSubscriber struct {
 	conn    redis.Conn
 	queue   string
 	handler HandlerFunc
+
+	stop chan struct{}
 }
 
 func NewQueueSubscriber(queue, dialTo string, h HandlerFunc) (*QueueSubscriber, error) {
@@ -58,39 +60,83 @@ func NewQueueSubscriber(queue, dialTo string, h HandlerFunc) (*QueueSubscriber, 
 		return nil, err
 	}
 
-	return &QueueSubscriber{queue: queue, conn: c, handler: h}, nil
+	stop := make(chan struct{})
+
+	return &QueueSubscriber{queue: queue, conn: c, handler: h, stop: stop}, nil
 }
 
 // Starts a goroutine to listen for messages.
 func (s *QueueSubscriber) Listen() {
-	// start listening
 	for {
-		err := s.ListenOnce()
-		if err != nil {
-			log.Printf("ripple_queue: Error handling msg: %s", err)
+		select {
+		case <-s.stop:
+			return
+
+		default:
+			select {
+			case <-s.stop:
+				return
+
+			case res := <-s.pop():
+				if res.err != nil {
+					log.Printf("ripple_queue: Error receiving msg: %s", res.err)
+				} else {
+					// execute handler
+					err := s.handler(res.b, s.queue)
+					if err != nil {
+						log.Printf("ripple_queue: Error handling msg: %s", err)
+					}
+				}
+			}
 		}
 	}
 }
 
+func (s *QueueSubscriber) Stop() {
+	s.stop <- struct{}{}
+}
+
 const QueueSubCmd = "BRPOP"
 
-func (s *QueueSubscriber) ListenOnce() error {
+type response struct {
+	b   []byte
+	err error
+}
+
+func (s *QueueSubscriber) pop() chan response {
+	ch := make(chan response)
+
+	go s.redisPop(ch)
+
+	return ch
+}
+
+func (s *QueueSubscriber) redisPop(ch chan response) {
+	var res response
+
 	reply, err := redis.Values(s.conn.Do(QueueSubCmd, s.queue, 0))
 	if err != nil {
-		panic(err)
+		res.err = err
+		ch <- res
+		return
 	}
 
 	var qName string
 	var msg string
 	if _, err := redis.Scan(reply, &qName, &msg); err != nil {
-		return err
+		res.err = err
+		ch <- res
+		return
 	}
 
 	// base64 decode msg
 	b, err := base64.StdEncoding.DecodeString(msg)
 	if err != nil {
-		return err
+		res.err = err
+		ch <- res
+		return
 	}
 
-	return s.handler(b, s.queue)
+	res.b = b
+	ch <- res
 }

@@ -32,4 +32,16 @@ func TestQueue(t *testing.T) {
 		t.Fatal("Expected handler function to be called")
 	case <-qChan:
 	}
+
+	// stop the subscriber
+	s.Stop()
+
+	// try sending another message
+	p.Pub(queue, []byte(pubMsg))
+
+	select {
+	case <-time.After(500 * time.Millisecond):
+	case <-qChan:
+		t.Fatal("Expected subscriber to have stopped")
+	}
 }
