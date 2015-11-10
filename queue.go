@@ -94,6 +94,7 @@ func (s *QueueSubscriber) Listen() {
 
 func (s *QueueSubscriber) Stop() {
 	s.stop <- struct{}{}
+	s.conn.Close()
 }
 
 const QueueSubCmd = "BRPOP"
