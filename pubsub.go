@@ -29,6 +29,10 @@ func (p *Publisher) Pub(channel string, b []byte) error {
 	return err
 }
 
+func (p *Publisher) Stop() error {
+	return p.connPool.Close()
+}
+
 type Subscriber struct {
 	dialTo        string
 	listenOn      redis.PubSubConn
@@ -50,6 +54,10 @@ func (s *Subscriber) On(channel string, f HandlerFunc) {
 // subscribe to a pattern
 func (s *Subscriber) OnPattern(chanPattern string, f HandlerFunc) {
 	s.subPatterns[chanPattern] = f
+}
+
+func (s *Subscriber) Stop() error {
+	return s.listenOn.Close()
 }
 
 // Starts a goroutine to listen for messages.
