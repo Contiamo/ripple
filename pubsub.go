@@ -47,30 +47,31 @@ func NewSubscriber(dialTo string) *Subscriber {
 	return s
 }
 
+// On specifies a handler function for a given channel subscription.
 func (s *Subscriber) On(channel string, f HandlerFunc) {
 	s.subscriptions[channel] = f
 }
 
-// subscribe to a pattern
+// OnPattern specifies a handler function for a given channel subscribe pattern.
 func (s *Subscriber) OnPattern(chanPattern string, f HandlerFunc) {
 	s.subPatterns[chanPattern] = f
 }
 
+// Stop closes the open connection.
 func (s *Subscriber) Stop() error {
 	return s.listenOn.Close()
 }
 
-// Starts a goroutine to listen for messages.
+// Listen is a blocking loop that waits for and handles messages.
 func (s *Subscriber) Listen() {
 	s.setupListen()
 
-	// start listening
 	for {
 		s.receive()
 	}
 }
 
-// Blocking listen - exits once the first message is received.
+// ListenOnce blocks and then exits once the first message is received.
 func (s *Subscriber) ListenOnce(f func(), timeout time.Duration) error {
 	s.setupListen()
 	f()
