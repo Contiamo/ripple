@@ -19,10 +19,8 @@ func redisPool(dialTo string) *redis.Pool {
 			return dial(dialTo)
 		},
 		TestOnBorrow: func(c redis.Conn, t time.Time) error {
-			// _, err := c.Do("PING")
-			// return err
-			// do not ping for every connection
-			return nil
+			_, err := c.Do("PING")
+			return err
 		},
 	}
 }
