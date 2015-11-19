@@ -47,22 +47,18 @@ func (p *QueuePublisher) MultiPub(queue string, bs [][]byte) error {
 }
 
 type QueueSubscriber struct {
-	conn    redis.Conn
-	queue   string
-	handler HandlerFunc
+	connPool *redis.Pool
+	queue    string
+	handler  HandlerFunc
 
 	stop chan struct{}
 }
 
 func NewQueueSubscriber(queue, dialTo string, h HandlerFunc) (*QueueSubscriber, error) {
-	c, err := dial(dialTo)
-	if err != nil {
-		return nil, err
-	}
-
+	connPool := redisPool(dialTo)
 	stop := make(chan struct{})
 
-	return &QueueSubscriber{queue: queue, conn: c, handler: h, stop: stop}, nil
+	return &QueueSubscriber{connPool: connPool, queue: queue, handler: h, stop: stop}, nil
 }
 
 // Starts a goroutine to listen for messages.
@@ -94,7 +90,7 @@ func (s *QueueSubscriber) Listen() {
 
 func (s *QueueSubscriber) Stop() {
 	s.stop <- struct{}{}
-	s.conn.Close()
+	s.connPool.Close()
 }
 
 const QueueSubCmd = "BRPOP"
@@ -113,9 +109,12 @@ func (s *QueueSubscriber) pop() chan response {
 }
 
 func (s *QueueSubscriber) redisPop(ch chan response) {
+	conn := s.connPool.Get()
+	defer conn.Close()
+
 	var res response
 
-	reply, err := redis.Values(s.conn.Do(QueueSubCmd, s.queue, 0))
+	reply, err := redis.Values(conn.Do(QueueSubCmd, s.queue, 0))
 	if err != nil {
 		res.err = err
 		ch <- res
