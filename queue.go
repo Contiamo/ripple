@@ -3,6 +3,7 @@ package ripple
 import (
 	"encoding/base64"
 	"log"
+	"time"
 
 	"github.com/garyburd/redigo/redis"
 )
@@ -51,7 +52,8 @@ type QueueSubscriber struct {
 	queue   string
 	handler HandlerFunc
 
-	stop chan struct{}
+	dialTo string
+	stop   chan struct{}
 }
 
 func NewQueueSubscriber(queue, dialTo string, h HandlerFunc) (*QueueSubscriber, error) {
@@ -62,7 +64,7 @@ func NewQueueSubscriber(queue, dialTo string, h HandlerFunc) (*QueueSubscriber, 
 
 	stop := make(chan struct{})
 
-	return &QueueSubscriber{queue: queue, conn: c, handler: h, stop: stop}, nil
+	return &QueueSubscriber{queue: queue, conn: c, handler: h, dialTo: dialTo, stop: stop}, nil
 }
 
 // Starts a goroutine to listen for messages.
@@ -79,7 +81,11 @@ func (s *QueueSubscriber) Listen() {
 
 			case res := <-s.pop():
 				if res.err != nil {
-					log.Printf("ripple_queue: Error receiving msg: %s", res.err)
+					if !s.reconnect() {
+						// since the connection is fine it's probably ok to log here
+						// - don't want to log in a tight loop which fails every time (i.e. when the connection is down)
+						log.Printf("ripple_queue: Error popping message: %s", res.err)
+					}
 				} else {
 					// execute handler
 					err := s.handler(res.b, s.queue)
@@ -95,6 +101,46 @@ func (s *QueueSubscriber) Listen() {
 func (s *QueueSubscriber) Stop() {
 	s.stop <- struct{}{}
 	s.conn.Close()
+}
+
+var waits = []time.Duration{1, 2, 4, 8}
+var default_wait = time.Duration(30)
+
+const MaxTries = 100
+
+// reconnect attempts to reconnect with a backoff in case of further failures.
+//
+// Attempts will be made to reconnect for ~ 3000s after which a panic will occur.
+// returns true if a connection was reestablished,
+// returns false if a connection immediately responded to a ping
+func (s *QueueSubscriber) reconnect() bool {
+	_, err := s.conn.Do("PING")
+	if err == nil {
+		// connection is already active - no reconnect needed
+		return false
+	}
+
+	for i := 0; i < MaxTries; i++ {
+		log.Println("ripple_queue attempting to reconnect to redis")
+
+		// redial
+		if conn, err := dial(s.dialTo); err == nil {
+			s.conn = conn
+			// reconnect was successful
+			return true
+		}
+
+		var timeout time.Duration
+		if i < len(waits) {
+			timeout = waits[i]
+		} else {
+			timeout = default_wait
+		}
+
+		<-time.After(timeout * time.Second)
+	}
+
+	panic("ripple queue could not connect to redis")
 }
 
 const QueueSubCmd = "BRPOP"

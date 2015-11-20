@@ -45,3 +45,38 @@ func TestQueue(t *testing.T) {
 		t.Fatal("Expected subscriber to have stopped")
 	}
 }
+
+func TestQueueReconnect(t *testing.T) {
+	dialTo := testDialTo()
+	queue := "ripple_test_queue"
+
+	qChan := make(chan bool)
+	handler := func(msg []byte, q string) error {
+		qChan <- true
+		fmt.Printf("msg: %s\n", msg)
+		return nil
+	}
+
+	s, err := NewQueueSubscriber(queue, dialTo, handler)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go s.Listen()
+	defer s.Stop()
+
+	// kill connection
+	if err := s.conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	pubMsg := "it worked!"
+	p := NewQueuePublisher(dialTo)
+	p.Pub(queue, []byte(pubMsg))
+
+	// subscriber should have reconnected
+	select {
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Expected handler function to be called")
+	case <-qChan:
+	}
+}
