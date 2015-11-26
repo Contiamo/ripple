@@ -83,12 +83,16 @@ func (s *Subscriber) Listen() error {
 		return err
 	}
 
-	select {
-	case <-s.stop:
-		return nil
+	for {
+		select {
+		case <-s.stop:
+			return nil
 
-	case err := <-s.receive():
-		return err
+		case err := <-s.receive():
+			if err != nil {
+				return err
+			}
+		}
 	}
 }
 
@@ -108,8 +112,12 @@ func (s *Subscriber) ListenOnce(f func(), timeout time.Duration) error {
 		return nil
 
 	case err := <-s.receive():
-		return err
+		if err != nil {
+			return err
+		}
 	}
+
+	return nil
 }
 
 func (s *Subscriber) setupListen() error {
