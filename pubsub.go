@@ -69,6 +69,7 @@ func (s *Subscriber) OnPattern(chanPattern string, f HandlerFunc) {
 // Stop closes the open connection.
 func (s *Subscriber) Stop() error {
 	s.stop <- struct{}{}
+	s.stopListen()
 	return s.listenOn.Close()
 }
 
@@ -126,6 +127,18 @@ func (s *Subscriber) setupListen() error {
 	}
 
 	return nil
+}
+
+func (s *Subscriber) stopListen() {
+	// unsubscribe
+	for channel := range s.subscriptions {
+		fmt.Println(s.listenOn.Unsubscribe(channel))
+	}
+
+	// unsubscribe to patterns
+	for chanPattern := range s.subPatterns {
+		s.listenOn.PUnsubscribe(chanPattern)
+	}
 }
 
 func (s *Subscriber) receive() <-chan error {
