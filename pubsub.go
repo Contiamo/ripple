@@ -43,6 +43,7 @@ type Subscriber struct {
 	listenOn      redis.PubSubConn
 	subscriptions map[string]HandlerFunc
 	subPatterns   map[string]HandlerFunc
+	stop          chan struct{}
 }
 
 // NewSubscriber returns a subscriber ready to subscribe.
@@ -66,6 +67,7 @@ func (s *Subscriber) OnPattern(chanPattern string, f HandlerFunc) {
 
 // Stop closes the open connection.
 func (s *Subscriber) Stop() error {
+	s.stop <- struct{}{}
 	return s.listenOn.Close()
 }
 
@@ -76,6 +78,13 @@ func (s *Subscriber) Listen() error {
 	}
 
 	for {
+		if s.stop != nil {
+			// Language spec: "Receiving from a nil channel blocks forever."
+			if _, ok := <-s.stop; ok {
+				return nil
+			}
+		}
+
 		s.receive()
 	}
 }
@@ -100,6 +109,9 @@ func (s *Subscriber) ListenOnce(f func(), timeout time.Duration) error {
 
 	case err := <-res:
 		return err
+
+	case <-s.stop:
+		return nil
 	}
 }
 
