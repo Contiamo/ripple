@@ -51,6 +51,7 @@ func NewSubscriber(dialTo string) *Subscriber {
 	s := &Subscriber{dialTo: dialTo}
 	s.subscriptions = make(map[string]HandlerFunc)
 	s.subPatterns = make(map[string]HandlerFunc)
+	s.stop = make(chan struct{})
 	return s
 }
 
@@ -77,15 +78,12 @@ func (s *Subscriber) Listen() error {
 		return err
 	}
 
-	for {
-		if s.stop != nil {
-			// Language spec: "Receiving from a nil channel blocks forever."
-			if _, ok := <-s.stop; ok {
-				return nil
-			}
-		}
+	select {
+	case <-s.stop:
+		return nil
 
-		s.receive()
+	case err := <-s.receive():
+		return err
 	}
 }
 
@@ -97,21 +95,15 @@ func (s *Subscriber) ListenOnce(f func(), timeout time.Duration) error {
 
 	f()
 
-	res := make(chan error)
-	go func() {
-		err := s.receive()
-		res <- err
-	}()
-
 	select {
 	case <-time.After(timeout):
 		return fmt.Errorf("ripple: ListenOnce timeout - no message received")
 
-	case err := <-res:
-		return err
-
 	case <-s.stop:
 		return nil
+
+	case err := <-s.receive():
+		return err
 	}
 }
 
@@ -136,38 +128,52 @@ func (s *Subscriber) setupListen() error {
 	return nil
 }
 
-func (s *Subscriber) receive() error {
-RECEIVE:
-	switch v := s.listenOn.Receive().(type) {
-	default:
-		// ignore this message type and try again
-		goto RECEIVE
-	case redis.Message:
-		msg := string(v.Data)
-		b, err := base64.StdEncoding.DecodeString(msg)
-		if err != nil {
-			return fmt.Errorf("ripple:Could not decode msg: %s", msg)
-		}
-		channel := v.Channel
+func (s *Subscriber) receive() <-chan error {
+	errch := make(chan error)
 
-		if f, ok := s.subscriptions[channel]; ok {
-			return f(b, channel)
-		}
-		return fmt.Errorf("handler not found in subscriptions")
-	case redis.PMessage:
-		msg := string(v.Data)
-		b, err := base64.StdEncoding.DecodeString(msg)
-		if err != nil {
-			return fmt.Errorf("ripple:Could not decode msg: %s", msg)
-		}
-		channel := v.Channel
-		pattern := v.Pattern
+	go func() {
+		for {
+		RECEIVE:
+			switch v := s.listenOn.Receive().(type) {
+			default:
+				// ignore this message type and try again
+				goto RECEIVE
+			case redis.Message:
+				msg := string(v.Data)
+				b, err := base64.StdEncoding.DecodeString(msg)
+				if err != nil {
+					errch <- fmt.Errorf("ripple:Could not decode msg: %s", msg)
+					return
+				}
+				channel := v.Channel
 
-		if f, ok := s.subPatterns[pattern]; ok {
-			return f(b, channel)
+				if f, ok := s.subscriptions[channel]; ok {
+					errch <- f(b, channel)
+					return
+				}
+				errch <- fmt.Errorf("handler not found in subscriptions")
+				return
+			case redis.PMessage:
+				msg := string(v.Data)
+				b, err := base64.StdEncoding.DecodeString(msg)
+				if err != nil {
+					errch <- fmt.Errorf("ripple:Could not decode msg: %s", msg)
+					return
+				}
+				channel := v.Channel
+				pattern := v.Pattern
+
+				if f, ok := s.subPatterns[pattern]; ok {
+					errch <- f(b, channel)
+					return
+				}
+				errch <- fmt.Errorf("handler not found in subscription patterns")
+			case error:
+				errch <- v
+				return
+			}
 		}
-		return fmt.Errorf("handler not found in subscription patterns")
-	case error:
-		return v
-	}
+	}()
+
+	return errch
 }
