@@ -69,7 +69,11 @@ func (s *Subscriber) OnPattern(chanPattern string, f HandlerFunc) {
 // Stop closes the open connection.
 func (s *Subscriber) Stop() error {
 	s.stop <- struct{}{}
-	s.stopListen()
+
+	if err := s.stopListen(); err != nil {
+		return err
+	}
+
 	return s.listenOn.Close()
 }
 
@@ -117,28 +121,40 @@ func (s *Subscriber) setupListen() error {
 	s.listenOn = redis.PubSubConn{Conn: c}
 
 	// subscribe
-	for channel := range s.subscriptions {
-		s.listenOn.Subscribe(channel)
+	for ch := range s.subscriptions {
+		if err := s.listenOn.Subscribe(ch); err != nil {
+			return fmt.Errorf("ripple: error subscribing to channel %q (%v)", ch, err)
+		}
 	}
 
 	// subscribe to patterns
-	for chanPattern := range s.subPatterns {
-		s.listenOn.PSubscribe(chanPattern)
+	for pat := range s.subPatterns {
+		if err := s.listenOn.PSubscribe(pat); err != nil {
+			return fmt.Errorf("ripple: error subscribing to channel pattern %q (%v)", pat, err)
+		}
 	}
 
 	return nil
 }
 
-func (s *Subscriber) stopListen() {
+func (s *Subscriber) stopListen() error {
 	// unsubscribe
-	for channel := range s.subscriptions {
-		fmt.Println(s.listenOn.Unsubscribe(channel))
+	for ch := range s.subscriptions {
+		err := s.listenOn.Unsubscribe(ch)
+		if err != nil {
+			return fmt.Errorf("ripple: error unsubscribing to channel %q (%v)", ch, err)
+		}
 	}
 
 	// unsubscribe to patterns
-	for chanPattern := range s.subPatterns {
-		s.listenOn.PUnsubscribe(chanPattern)
+	for pat := range s.subPatterns {
+		err := s.listenOn.PUnsubscribe(pat)
+		if err != nil {
+			return fmt.Errorf("ripple: error unsubscribing to channel pattern %q (%v)", pat, err)
+		}
 	}
+
+	return nil
 }
 
 func (s *Subscriber) receive() <-chan error {
