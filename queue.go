@@ -2,6 +2,7 @@ package ripple
 
 import (
 	"encoding/base64"
+	"fmt"
 	"log"
 	"time"
 
@@ -52,6 +53,11 @@ func (p *QueuePublisher) MultiPub(queue string, bs [][]byte) error {
 	return err
 }
 
+// Stop stops the publisher.
+func (p *QueuePublisher) Stop() error {
+	return p.connPool.Close()
+}
+
 // QueueSubscriber subscribes to a list.
 type QueueSubscriber struct {
 	conn    redis.Conn
@@ -75,29 +81,29 @@ func NewQueueSubscriber(queue, dialTo string, h HandlerFunc) (*QueueSubscriber, 
 }
 
 // Listen starts a goroutine to listen for messages.
-func (s *QueueSubscriber) Listen() {
+func (s *QueueSubscriber) Listen() error {
 	for {
 		select {
 		case <-s.stop:
-			return
+			return nil
 
 		default:
 			select {
 			case <-s.stop:
-				return
+				return nil
 
 			case res := <-s.pop():
 				if res.err != nil {
 					if !s.reconnect() {
 						// since the connection is fine it's probably ok to log here
 						// - don't want to log in a tight loop which fails every time (i.e. when the connection is down)
-						log.Printf("ripple_queue: Error popping message: %s", res.err)
+						return fmt.Errorf("ripple_queue: Error popping message: %s", res.err)
 					}
 				} else {
 					// execute handler
 					err := s.handler(res.b, s.queue)
 					if err != nil {
-						log.Printf("ripple_queue: Error handling msg: %s", err)
+						return fmt.Errorf("ripple_queue: Error handling msg: %s", err)
 					}
 				}
 			}
@@ -106,9 +112,9 @@ func (s *QueueSubscriber) Listen() {
 }
 
 // Stop closes the open connection.
-func (s *QueueSubscriber) Stop() {
+func (s *QueueSubscriber) Stop() error {
 	s.stop <- struct{}{}
-	s.conn.Close()
+	return s.conn.Close()
 }
 
 var waits = []time.Duration{1, 2, 4, 8}
