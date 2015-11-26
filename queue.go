@@ -8,18 +8,22 @@ import (
 	"github.com/garyburd/redigo/redis"
 )
 
+// QueuePublisher publishes a message to a list.
 type QueuePublisher struct {
 	connPool *redis.Pool
 	dialTo   string
 }
 
+// NewQueuePublisher returns a queue publisher ready to insert keys.
 func NewQueuePublisher(dialTo string) *QueuePublisher {
 	connPool := redisPool(dialTo)
 	return &QueuePublisher{connPool: connPool, dialTo: dialTo}
 }
 
+// Command to queue a message.
 const QueuePubCmd = "LPUSH"
 
+// Pub inserts a message into list queue.
 func (p *QueuePublisher) Pub(queue string, b []byte) error {
 	conn := p.connPool.Get()
 	defer conn.Close()
@@ -31,6 +35,7 @@ func (p *QueuePublisher) Pub(queue string, b []byte) error {
 	return err
 }
 
+// MultiPub inserts a slice of messages into list queue.
 func (p *QueuePublisher) MultiPub(queue string, bs [][]byte) error {
 	conn := p.connPool.Get()
 	defer conn.Close()
@@ -47,6 +52,7 @@ func (p *QueuePublisher) MultiPub(queue string, bs [][]byte) error {
 	return err
 }
 
+// QueueSubscriber subscribes to a list.
 type QueueSubscriber struct {
 	conn    redis.Conn
 	queue   string
@@ -56,6 +62,7 @@ type QueueSubscriber struct {
 	stop   chan struct{}
 }
 
+// NewQueueSubscriber returns a queue subscriber ready to subscribe.
 func NewQueueSubscriber(queue, dialTo string, h HandlerFunc) (*QueueSubscriber, error) {
 	c, err := dial(dialTo)
 	if err != nil {
@@ -67,7 +74,7 @@ func NewQueueSubscriber(queue, dialTo string, h HandlerFunc) (*QueueSubscriber, 
 	return &QueueSubscriber{queue: queue, conn: c, handler: h, dialTo: dialTo, stop: stop}, nil
 }
 
-// Starts a goroutine to listen for messages.
+// Listen starts a goroutine to listen for messages.
 func (s *QueueSubscriber) Listen() {
 	for {
 		select {
@@ -98,14 +105,16 @@ func (s *QueueSubscriber) Listen() {
 	}
 }
 
+// Stop closes the open connection.
 func (s *QueueSubscriber) Stop() {
 	s.stop <- struct{}{}
 	s.conn.Close()
 }
 
 var waits = []time.Duration{1, 2, 4, 8}
-var default_wait = time.Duration(30)
+var defaultWait = time.Duration(30)
 
+// Number of retries.
 const MaxTries = 100
 
 // reconnect attempts to reconnect with a backoff in case of further failures.
@@ -134,7 +143,7 @@ func (s *QueueSubscriber) reconnect() bool {
 		if i < len(waits) {
 			timeout = waits[i]
 		} else {
-			timeout = default_wait
+			timeout = defaultWait
 		}
 
 		<-time.After(timeout * time.Second)
@@ -143,6 +152,7 @@ func (s *QueueSubscriber) reconnect() bool {
 	panic("ripple queue could not connect to redis")
 }
 
+// Command to retrieve a message from the queue.
 const QueueSubCmd = "BRPOP"
 
 type response struct {

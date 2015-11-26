@@ -8,16 +8,19 @@ import (
 	"github.com/garyburd/redigo/redis"
 )
 
+// Publisher publishes a message to a PUBSUB channel.
 type Publisher struct {
 	connPool *redis.Pool
 	dialTo   string
 }
 
+// NewPublisher returns a publisher ready to publish.
 func NewPublisher(dialTo string) *Publisher {
 	connPool := redisPool(dialTo)
 	return &Publisher{connPool: connPool, dialTo: dialTo}
 }
 
+// Pub publishes a message to a Redis channel.
 func (p *Publisher) Pub(channel string, b []byte) error {
 	conn := p.connPool.Get()
 	defer conn.Close()
@@ -29,10 +32,12 @@ func (p *Publisher) Pub(channel string, b []byte) error {
 	return err
 }
 
+// Stop stops the publisher.
 func (p *Publisher) Stop() error {
 	return p.connPool.Close()
 }
 
+// Subscriber subscribes to a PUBSUB channel.
 type Subscriber struct {
 	dialTo        string
 	listenOn      redis.PubSubConn
@@ -40,6 +45,7 @@ type Subscriber struct {
 	subPatterns   map[string]HandlerFunc
 }
 
+// NewSubscriber returns a subscriber ready to subscribe.
 func NewSubscriber(dialTo string) *Subscriber {
 	s := &Subscriber{dialTo: dialTo}
 	s.subscriptions = make(map[string]HandlerFunc)
@@ -47,12 +53,13 @@ func NewSubscriber(dialTo string) *Subscriber {
 	return s
 }
 
-// On specifies a handler function for a given channel subscription.
+// On specifies a handler function for a given PUBSUB channel subscription.
 func (s *Subscriber) On(channel string, f HandlerFunc) {
 	s.subscriptions[channel] = f
 }
 
-// OnPattern specifies a handler function for a given channel subscribe pattern.
+// OnPattern specifies a handler function for a given PUBSUB channel subscribe
+// pattern.
 func (s *Subscriber) OnPattern(chanPattern string, f HandlerFunc) {
 	s.subPatterns[chanPattern] = f
 }
@@ -63,8 +70,10 @@ func (s *Subscriber) Stop() error {
 }
 
 // Listen is a blocking loop that waits for and handles messages.
-func (s *Subscriber) Listen() {
-	s.setupListen()
+func (s *Subscriber) Listen() error {
+	if err := s.setupListen(); err != nil {
+		return err
+	}
 
 	for {
 		s.receive()
@@ -73,7 +82,10 @@ func (s *Subscriber) Listen() {
 
 // ListenOnce blocks and then exits once the first message is received.
 func (s *Subscriber) ListenOnce(f func(), timeout time.Duration) error {
-	s.setupListen()
+	if err := s.setupListen(); err != nil {
+		return err
+	}
+
 	f()
 
 	res := make(chan error)
@@ -91,23 +103,25 @@ func (s *Subscriber) ListenOnce(f func(), timeout time.Duration) error {
 	}
 }
 
-func (s *Subscriber) setupListen() {
+func (s *Subscriber) setupListen() error {
 	c, err := dial(s.dialTo)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
-	s.listenOn = redis.PubSubConn{c}
+	s.listenOn = redis.PubSubConn{Conn: c}
 
 	// subscribe
-	for channel, _ := range s.subscriptions {
+	for channel := range s.subscriptions {
 		s.listenOn.Subscribe(channel)
 	}
 
 	// subscribe to patterns
-	for chanPattern, _ := range s.subPatterns {
+	for chanPattern := range s.subPatterns {
 		s.listenOn.PSubscribe(chanPattern)
 	}
+
+	return nil
 }
 
 func (s *Subscriber) receive() error {
@@ -126,9 +140,8 @@ RECEIVE:
 
 		if f, ok := s.subscriptions[channel]; ok {
 			return f(b, channel)
-		} else {
-			return fmt.Errorf("handler not found in subscriptions")
 		}
+		return fmt.Errorf("handler not found in subscriptions")
 	case redis.PMessage:
 		msg := string(v.Data)
 		b, err := base64.StdEncoding.DecodeString(msg)
@@ -140,9 +153,8 @@ RECEIVE:
 
 		if f, ok := s.subPatterns[pattern]; ok {
 			return f(b, channel)
-		} else {
-			return fmt.Errorf("handler not found in subscription patterns")
 		}
+		return fmt.Errorf("handler not found in subscription patterns")
 	case error:
 		return v
 	}

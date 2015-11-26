@@ -6,7 +6,8 @@ import (
 	"github.com/garyburd/redigo/redis"
 )
 
-type HandlerFunc func([]byte, string) error
+// HandlerFunc handles a queue message.
+type HandlerFunc func(msg []byte, queue string) error
 
 func redisPool(dialTo string) *redis.Pool {
 	maxIdle := 50
