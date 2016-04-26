@@ -2,8 +2,8 @@ package ripple
 
 import (
 	"encoding/base64"
+	"fmt"
 	"log"
-	"time"
 
 	"github.com/garyburd/redigo/redis"
 )
@@ -111,17 +111,7 @@ func (s *QueueSubscriber) Stop() {
 	s.conn.Close()
 }
 
-var waits = []time.Duration{1, 2, 4, 8}
-var defaultWait = time.Duration(30)
-
-// Number of retries.
-const MaxTries = 100
-
-// reconnect attempts to reconnect with a backoff in case of further failures.
-//
-// Attempts will be made to reconnect for ~ 3000s after which a panic will occur.
-// returns true if a connection was reestablished,
-// returns false if a connection immediately responded to a ping
+// reconnect checks if the connection valid, otherwise dials a new one
 func (s *QueueSubscriber) reconnect() bool {
 	_, err := s.conn.Do("PING")
 	if err == nil {
@@ -129,27 +119,13 @@ func (s *QueueSubscriber) reconnect() bool {
 		return false
 	}
 
-	for i := 0; i < MaxTries; i++ {
-		log.Println("ripple_queue attempting to reconnect to redis")
-
-		// redial
-		if conn, err := dial(s.dialTo); err == nil {
-			s.conn = conn
-			// reconnect was successful
-			return true
-		}
-
-		var timeout time.Duration
-		if i < len(waits) {
-			timeout = waits[i]
-		} else {
-			timeout = defaultWait
-		}
-
-		<-time.After(timeout * time.Second)
+	conn, err := dialWithRetry(s.dialTo)
+	if err != nil {
+		panic(fmt.Sprintf("ripple_queue subscriber dial failed: %s", err))
 	}
 
-	panic("ripple queue could not connect to redis")
+	s.conn = conn
+	return true
 }
 
 // Command to retrieve a message from the queue.
