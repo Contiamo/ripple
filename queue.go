@@ -71,7 +71,10 @@ func NewQueueSubscriber(queue, dialTo string, h HandlerFunc) (*QueueSubscriber, 
 
 	stop := make(chan struct{})
 
-	return &QueueSubscriber{queue: queue, conn: c, handler: h, dialTo: dialTo, stop: stop}, nil
+	sub := &QueueSubscriber{queue: queue, conn: c, handler: h, dialTo: dialTo, stop: stop}
+	sub.setClient()
+
+	return sub, nil
 }
 
 // Listen starts a goroutine to listen for messages.
@@ -125,6 +128,8 @@ func (s *QueueSubscriber) reconnect() bool {
 	}
 
 	s.conn = conn
+	s.setClient()
+
 	return true
 }
 
@@ -142,6 +147,14 @@ func (s *QueueSubscriber) pop() chan response {
 	go s.redisPop(ch)
 
 	return ch
+}
+
+func (s *QueueSubscriber) setClient() {
+	// set client name
+	_, err := s.conn.Do("CLIENT", "SETNAME", fmt.Sprintf("sub_%s", s.queue))
+	if err != nil {
+		log.Printf("ripple_queue: Error setting client name: %s", err)
+	}
 }
 
 func (s *QueueSubscriber) redisPop(ch chan response) {
